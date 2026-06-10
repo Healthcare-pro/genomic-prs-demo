@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PRS 자동화 파이프라인 — 인터랙티브 데모 v3</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
+<style>
+  :root { --navy:#0b2545; --navy-2:#13315c; --gold:#c8a96a; --paper:#faf7f1; --ink:#1a1a1a; }
+  body { font-family:'Cambria','Noto Serif KR',serif; background:var(--paper); color:var(--ink); }
+  h1,h2,h3,.ui { font-family:'Calibri','Noto Sans KR',system-ui,sans-serif; }
+  .card { background:#fff; border:1px solid #e7e2d4; border-radius:10px; }
+  .pill { display:inline-block; padding:2px 10px; border-radius:999px; font-size:12px; }
+  .pill-gold { background:var(--gold); color:#fff; }
+  .pill-navy { background:#1f4068; color:#fff; }
+  .pill-mute { background:#eee; color:#555; }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:#0b2545; color:#fff; font-size:13px; }
+  .chip button { color:#fde68a; font-weight:600; }
+  .agent { border-left:4px solid var(--gold); }
+  .step-dot { width:10px; height:10px; border-radius:50%; background:#cbd5e1; display:inline-block; }
+  .step-dot.run { background:var(--gold); box-shadow:0 0 0 4px rgba(200,169,106,.25); animation:pulse 1s infinite; }
+  .step-dot.done { background:#16a34a; }
+  @keyframes pulse { 50% { box-shadow:0 0 0 8px rgba(200,169,106,0); } }
+  .log { font-family:'Consolas',monospace; font-size:12.5px; background:#0b1220; color:#cbd5e1; }
+  .log .ok{color:#86efac} .log .warn{color:#fbbf24} .log .info{color:#93c5fd} .log .em{color:#fda4af}
+  .grad-hero { background:linear-gradient(135deg,var(--navy) 0%,var(--navy-2) 70%,#1f4068 100%); }
+  .scroll-shadow { mask-image:linear-gradient(to bottom,black 80%,transparent); }
+  table.tight td, table.tight th { padding:6px 10px; border-bottom:1px solid #ece6d4; }
+  table.tight th { text-align:left; color:#555; font-weight:600; font-size:12px; }
+  .suggest { position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:30;
+             background:#fff; border:1px solid #e7e2d4; border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,.08); max-height:420px; overflow:auto; }
+  .suggest button { display:flex; justify-content:space-between; width:100%; padding:8px 12px; text-align:left; }
+  .suggest button:hover { background:#faf3e1; }
+  details > summary { cursor:pointer; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- HERO -->
+<header class="grad-hero text-white">
+  <div class="max-w-6xl mx-auto px-6 py-10">
+    <div class="flex items-start justify-between gap-6 flex-wrap">
+      <div>
+        <div class="ui text-sm uppercase tracking-widest text-amber-200/90">PRS Pipeline · Interactive v2</div>
+        <h1 class="text-3xl md:text-4xl font-bold mt-2">연구자 입력형 PRS 자동화 데모</h1>
+        <p class="mt-3 text-white/80 max-w-3xl">
+          분석하고 싶은 질환을 2–5개 입력하면, GEO 발현 데이터에서 후보 유전자를 찾고
+          PGS Catalog에서 다유전자 위험점수(PRS)를 받아 모든 조합의 상관축을 자동으로 계산·해석한다.
+        </p>
+      </div>
+      <div class="ui flex flex-col gap-2 text-sm">
+        <span class="pill pill-gold">Orchestrator: Claude Code</span>
+        <span class="pill pill-navy">Sub-agents × 5</span>
+        <span class="pill pill-navy">Data: GEO + PGS Catalog + 1000G</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-6 py-10 space-y-10">
+
+  <!-- INPUT -->
+  <section>
+    <h2 class="text-xl font-bold mb-3">1. 분석할 질환 선택</h2>
+    <div class="card p-5 relative">
+      <div id="chips" class="flex flex-wrap gap-2 mb-3"></div>
+      <div class="relative">
+        <input id="diseaseInput" type="text" placeholder="질환명을 입력하세요 (예: type 2 diabetes, stroke, breast cancer…)"
+               class="ui w-full border border-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-300" autocomplete="off">
+        <div id="suggest" class="suggest hidden"></div>
+      </div>
+      <div class="mt-3 flex justify-between items-center flex-wrap gap-3">
+        <div class="ui text-sm text-slate-600">
+          <span id="countBadge" class="pill pill-mute">0 / 5 선택</span>
+          · 최소 1개, 최대 5개
+        </div>
+        <div class="ui text-sm text-slate-500">빠른 선택:
+          <button class="text-amber-700 underline" data-preset="metabolic">대사·혈관축</button>
+          ·
+          <button class="text-amber-700 underline" data-preset="onco">암 패널</button>
+          ·
+          <button class="text-amber-700 underline" data-preset="neuro">신경·정신</button>
+          ·
+          <button class="text-amber-700 underline" data-preset="immune">면역·염증</button>
+        </div>
+      </div>
+      <div class="mt-5 flex gap-3 flex-wrap">
+        <button id="runBtn" class="ui bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold px-5 py-2 rounded-lg shadow disabled:opacity-50 disabled:cursor-not-allowed">▶ 파이프라인 실행</button>
+        <button id="resetBtn" class="ui bg-slate-100 hover:bg-slate-200 text-slate-700 px-5 py-2 rounded-lg border border-slate-200">선택 초기화</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- PIPELINE STAGES -->
+  <section id="pipelineSec" class="hidden">
+    <h2 class="text-xl font-bold mb-3">2. 에이전트 실행</h2>
+    <div class="grid md:grid-cols-2 gap-5">
+      <div class="card p-4">
+        <div class="ui font-semibold mb-3">파이프라인 단계</div>
+        <ul id="stepList" class="space-y-2 text-sm"></ul>
+        <div class="ui text-xs text-slate-500 mt-4">
+          수동 작업 추정: <span class="font-semibold text-slate-700">~2주</span> ·
+          자동화: <span class="font-semibold text-amber-600" id="elapsed">대기 중</span>
+        </div>
+      </div>
+      <div class="card p-0 overflow-hidden">
+        <div class="ui font-semibold px-4 py-3 border-b">실시간 에이전트 로그</div>
+        <div id="log" class="log p-4 h-72 overflow-auto scroll-shadow"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RESULTS WRAPPER -->
+  <div id="results" class="hidden space-y-10">
+
+    <!-- STAGE 0 -->
+    <section>
+      <h2 class="text-xl font-bold mb-3">3. 0단계 — GEO 발현 데이터 기반 후보 유전자</h2>
+      <p class="text-sm text-slate-600 mb-3">
+        각 질환의 seed GSE에서 case/control을 자동 분류하고 t-test로 차등발현유전자(DEG)를 추출한다.
+        이 결과는 PGS 후보의 임상적 타당성을 교차 검증하는 근거가 된다.
+      </p>
+      <div id="geneGrid" class="grid md:grid-cols-3 gap-5"></div>
+    </section>
+
+    <!-- STAGE 1 -->
+    <section>
+      <h2 class="text-xl font-bold mb-3">4. 1단계 — PGS Catalog scoring files</h2>
+      <div class="card p-4 overflow-auto">
+        <table class="tight w-full text-sm">
+          <thead><tr><th>질환</th><th>PGS ID</th><th>형질</th><th>변이 수</th><th>빌드</th><th>출처</th></tr></thead>
+          <tbody id="scoreRows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- STAGE 2-3 -->
+    <section>
+      <h2 class="text-xl font-bold mb-3" id="analysisTitle">5. 2–3단계 — PRS 계산 + 조합 상관분석</h2>
+
+      <!-- 다질환 모드: 히트맵 + 조합 표 -->
+      <div id="multiBlock" class="grid md:grid-cols-2 gap-5">
+        <div class="card p-4">
+          <div class="ui font-semibold mb-2">PRS 상관 히트맵</div>
+          <canvas id="heatmap" height="280"></canvas>
+          <p class="text-xs text-slate-500 mt-2">N = 2,504 (1000 Genomes phase 3) · Pearson</p>
+        </div>
+        <div class="card p-4">
+          <div class="ui font-semibold mb-2">조합 상관 요약 <span class="text-xs text-slate-500" id="comboCountLabel"></span></div>
+          <div class="overflow-auto max-h-80">
+            <table class="tight w-full text-sm">
+              <thead><tr><th>조합</th><th>Pearson r</th><th>Spearman ρ</th><th>p</th><th>강도</th></tr></thead>
+              <tbody id="comboRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 다질환 모드: 산점도 -->
+      <div id="scatterBlock" class="card p-4 mt-5">
+        <div class="ui font-semibold mb-2">개인별 PRS 산점도 <span id="scatterLabel" class="text-xs text-slate-500"></span></div>
+        <div class="flex items-center gap-3 mb-2 ui text-sm">
+          <label>X축: <select id="xAxisSel" class="border rounded px-2 py-1"></select></label>
+          <label>Y축: <select id="yAxisSel" class="border rounded px-2 py-1"></select></label>
+          <span class="text-xs text-slate-500 ml-auto">상위 20% = 고위험군</span>
+        </div>
+        <canvas id="scatter" height="220"></canvas>
+      </div>
+
+      <!-- 단일 질환 모드: PRS 분포 히스토그램 + 위험계층 -->
+      <div id="singleBlock" class="hidden grid md:grid-cols-2 gap-5">
+        <div class="card p-4">
+          <div class="ui font-semibold mb-2">PRS 분포 <span id="histLabel" class="text-xs text-slate-500"></span></div>
+          <canvas id="histogram" height="260"></canvas>
+          <p class="text-xs text-slate-500 mt-2">표준화된 PRS z-score · 상위 20% 고위험군 강조</p>
+        </div>
+        <div class="card p-4">
+          <div class="ui font-semibold mb-2">위험 계층 요약</div>
+          <table class="tight w-full text-sm">
+            <thead><tr><th>구간</th><th>z-score 범위</th><th>인원</th><th>비율</th></tr></thead>
+            <tbody id="riskRows"></tbody>
+          </table>
+          <p class="text-xs text-slate-500 mt-3">N = 2,504 (1000 Genomes phase 3) · 가상의 정규분포 모사</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- STAGE 4 -->
+    <section>
+      <h2 class="text-xl font-bold mb-3">6. 4단계 — LLM 자동 리포트</h2>
+      <div class="card p-5">
+        <div id="report" class="prose max-w-none text-[15px] leading-relaxed text-slate-800"></div>
+      </div>
+    </section>
+
+  </div>
+
+  <section class="text-xs text-slate-500 leading-relaxed">
+    <p>※ 본 데모의 수치는 PGS Catalog·GEO·1000 Genomes를 활용한 실제 파이프라인 산출물을 모사한
+    근사값이다(브라우저 시연용, 알려진 질환 간 공유 위험축 문헌을 반영함). 새로운 질환 조합은 자동으로
+    잠재 위험 축 벡터에서 합리적 추정치를 생성한다. 실제 임상 적용 시 IRB 승인·코호트 검증이 필요하다.</p>
+  </section>
+
+</main>
+
+<footer class="border-t border-slate-200 mt-10">
+  <div class="max-w-6xl mx-auto px-6 py-6 text-xs text-slate-500 flex justify-between flex-wrap gap-3">
+    <span>prs-pipeline · interactive v2 · 2026</span>
+    <span>Powered by Claude Code · PGS Catalog · GEO · 1000 Genomes</span>
+  </div>
+</footer>
+
+<script>
+// ===== DISEASE LIBRARY =====
+// Each disease has trait metadata + "latent axes" vector used to derive
+// plausible PRS correlations between any two diseases (cosine similarity → r).
+// Axes: cv (cardiovascular), met (metabolic), renal, neuro, onco, immune, psych, hepatic.
+const DB = {
+  t2d:    { kr:"2형 당뇨", en:"Type 2 diabetes", efo:"EFO_0001360", gse:"GSE25724", pgs:"PGS000014", variants:"6,917,436", source:"Mahajan 2018",
+            genes:[["TCF7L2",2.41,"3.1e-12"],["KCNJ11",1.82,"5.5e-09"],["PPARG",1.61,"2.0e-07"],["INSR",-1.42,"9.0e-06"],["IRS1",-1.31,"4.0e-05"],["SLC30A8",1.27,"1.1e-04"]],
+            axes:{cv:0.45, met:0.95, renal:0.5, neuro:0.1, onco:0.1, immune:0.3, psych:0.1, hepatic:0.4}},
+  dfu:    { kr:"당뇨발", en:"Diabetic foot ulcer", efo:"EFO_1001459", gse:"GSE80178", pgs:"PGS000014*", variants:"6,917,436", source:"T2D proxy (Mahajan 2018)",
+            genes:[["IL1B",3.42,"1.2e-08"],["MMP9",2.91,"4.5e-07"],["S100A8",2.74,"9.1e-07"],["DEFB4A",2.55,"2.3e-06"],["CXCL8",2.31,"6.7e-06"],["TNF",2.18,"1.1e-05"]],
+            axes:{cv:0.55, met:0.85, renal:0.45, neuro:0.05, onco:0.05, immune:0.7, psych:0.05, hepatic:0.2}},
+  pad:    { kr:"말초동맥질환", en:"Peripheral artery disease", efo:"EFO_0004265", gse:"GSE100927", pgs:"PGS002259", variants:"1,089,213", source:"Klarin 2019",
+            genes:[["MMP2",2.81,"3.4e-08"],["COL1A1",2.52,"9.0e-08"],["VCAM1",2.34,"5.5e-07"],["CXCL12",2.11,"2.8e-06"],["TGFB1",1.97,"8.9e-06"],["NOS3",-1.74,"4.3e-05"]],
+            axes:{cv:0.95, met:0.4, renal:0.4, neuro:0.05, onco:0.05, immune:0.5, psych:0.05, hepatic:0.15}},
+  ckd:    { kr:"만성콩팥병", en:"Chronic kidney disease", efo:"EFO_0003884", gse:"GSE66494", pgs:"PGS000728", variants:"940,127", source:"Wuttke 2019",
+            genes:[["UMOD",-3.12,"5.5e-09"],["NPHS2",-2.43,"1.7e-07"],["SLC22A2",-2.21,"7.4e-07"],["TGFB1",2.14,"9.0e-07"],["COL3A1",2.02,"3.4e-06"],["LCN2",1.71,"4.2e-05"]],
+            axes:{cv:0.5, met:0.5, renal:0.95, neuro:0.05, onco:0.05, immune:0.45, psych:0.05, hepatic:0.2}},
+  cad:    { kr:"관상동맥질환", en:"Coronary artery disease", efo:"EFO_0001645", gse:"GSE12288", pgs:"PGS000018", variants:"6,630,150", source:"Inouye 2018",
+            genes:[["LDLR",2.95,"2.1e-09"],["APOB",2.42,"6.8e-08"],["PCSK9",2.21,"4.4e-07"],["LPA",1.97,"3.1e-06"],["SORT1",1.83,"1.5e-05"]],
+            axes:{cv:0.98, met:0.55, renal:0.35, neuro:0.05, onco:0.05, immune:0.4, psych:0.05, hepatic:0.3}},
+  stroke: { kr:"뇌졸중", en:"Ischemic stroke", efo:"EFO_0000712", gse:"GSE16561", pgs:"PGS000039", variants:"1,256,109", source:"Malik 2018",
+            genes:[["F2",2.32,"4.0e-08"],["PITX2",2.04,"2.5e-07"],["HDAC9",1.91,"6.4e-07"],["FOXF2",1.74,"5.5e-06"],["ALDH2",-1.51,"7.7e-05"]],
+            axes:{cv:0.9, met:0.45, renal:0.35, neuro:0.6, onco:0.05, immune:0.3, psych:0.1, hepatic:0.1}},
+  htn:    { kr:"고혈압", en:"Hypertension", efo:"EFO_0000537", gse:"GSE75360", pgs:"PGS000301", variants:"1,067,886", source:"Evangelou 2018",
+            genes:[["AGT",2.21,"3.2e-08"],["ACE",1.94,"8.0e-07"],["NPPA",1.76,"4.4e-06"],["ADRB1",1.52,"5.0e-05"]],
+            axes:{cv:0.85, met:0.55, renal:0.65, neuro:0.1, onco:0.05, immune:0.3, psych:0.1, hepatic:0.2}},
+  obesity:{ kr:"비만", en:"Obesity / BMI", efo:"EFO_0007041", gse:"GSE9624", pgs:"PGS000027", variants:"2,099,012", source:"Yengo 2018",
+            genes:[["FTO",2.71,"8.2e-10"],["MC4R",2.34,"1.2e-08"],["TMEM18",1.92,"5.1e-07"],["LEP",1.81,"2.0e-06"],["LEPR",1.66,"1.4e-05"]],
+            axes:{cv:0.55, met:0.95, renal:0.4, neuro:0.15, onco:0.3, immune:0.4, psych:0.2, hepatic:0.7}},
+  nafld:  { kr:"비알코올성 지방간", en:"NAFLD", efo:"EFO_0003095", gse:"GSE48452", pgs:"PGS001296", variants:"875,432", source:"Anstee 2020",
+            genes:[["PNPLA3",2.85,"1.0e-09"],["TM6SF2",2.31,"3.2e-08"],["GCKR",1.84,"7.5e-07"],["MBOAT7",1.62,"2.4e-05"]],
+            axes:{cv:0.45, met:0.85, renal:0.3, neuro:0.05, onco:0.25, immune:0.3, psych:0.05, hepatic:0.98}},
+  ad:     { kr:"알츠하이머병", en:"Alzheimer's disease", efo:"EFO_0000249", gse:"GSE5281", pgs:"PGS000026", variants:"1,054,213", source:"Bellenguez 2022",
+            genes:[["APOE",3.12,"4.0e-13"],["BIN1",2.21,"8.5e-08"],["CLU",1.84,"4.2e-06"],["CR1",1.67,"2.0e-05"],["TREM2",1.55,"7.0e-05"]],
+            axes:{cv:0.35, met:0.25, renal:0.1, neuro:0.97, onco:0.05, immune:0.5, psych:0.4, hepatic:0.1}},
+  pd:     { kr:"파킨슨병", en:"Parkinson's disease", efo:"EFO_0002508", gse:"GSE7621", pgs:"PGS000023", variants:"890,221", source:"Nalls 2019",
+            genes:[["SNCA",2.62,"6.4e-10"],["LRRK2",2.18,"3.0e-08"],["GBA",1.95,"1.5e-07"],["MAPT",1.71,"6.6e-06"]],
+            axes:{cv:0.2, met:0.2, renal:0.1, neuro:0.95, onco:0.05, immune:0.3, psych:0.3, hepatic:0.1}},
+  mdd:    { kr:"주요우울장애", en:"Major depressive disorder", efo:"EFO_0003761", gse:"GSE98793", pgs:"PGS000025", variants:"1,213,401", source:"Howard 2019",
+            genes:[["BDNF",2.04,"3.0e-07"],["SLC6A4",1.81,"1.2e-06"],["FKBP5",1.62,"5.5e-05"]],
+            axes:{cv:0.25, met:0.25, renal:0.1, neuro:0.55, onco:0.05, immune:0.35, psych:0.95, hepatic:0.1}},
+  scz:    { kr:"조현병", en:"Schizophrenia", efo:"EFO_0000692", gse:"GSE53987", pgs:"PGS000031", variants:"1,407,210", source:"Trubetskoy 2022",
+            genes:[["DRD2",2.51,"1.2e-09"],["GRIN2A",2.04,"6.7e-08"],["CACNA1C",1.83,"4.2e-06"]],
+            axes:{cv:0.2, met:0.3, renal:0.1, neuro:0.65, onco:0.05, immune:0.35, psych:0.98, hepatic:0.1}},
+  brca:   { kr:"유방암", en:"Breast cancer", efo:"EFO_0000305", gse:"GSE15852", pgs:"PGS000507", variants:"313,890", source:"Mavaddat 2019",
+            genes:[["BRCA1",3.21,"5.4e-12"],["BRCA2",2.84,"8.1e-10"],["TP53",2.31,"3.0e-08"],["ESR1",2.04,"7.2e-07"],["PALB2",1.71,"2.4e-05"]],
+            axes:{cv:0.1, met:0.25, renal:0.1, neuro:0.05, onco:0.97, immune:0.45, psych:0.1, hepatic:0.15}},
+  prca:   { kr:"전립선암", en:"Prostate cancer", efo:"EFO_0001663", gse:"GSE6919", pgs:"PGS000662", variants:"269,141", source:"Conti 2021",
+            genes:[["AR",2.74,"3.0e-10"],["KLK3",2.32,"1.4e-08"],["MYC",1.92,"5.5e-07"]],
+            axes:{cv:0.1, met:0.25, renal:0.1, neuro:0.05, onco:0.97, immune:0.4, psych:0.05, hepatic:0.1}},
+  crc:    { kr:"대장암", en:"Colorectal cancer", efo:"EFO_0005842", gse:"GSE9348", pgs:"PGS000074", variants:"154,001", source:"Huyghe 2019",
+            genes:[["APC",3.02,"1.0e-11"],["KRAS",2.41,"2.4e-08"],["TP53",2.04,"7.0e-07"],["MLH1",-1.74,"5.0e-06"]],
+            axes:{cv:0.15, met:0.4, renal:0.1, neuro:0.05, onco:0.95, immune:0.45, psych:0.1, hepatic:0.2}},
+  asthma: { kr:"천식", en:"Asthma", efo:"EFO_0000270", gse:"GSE43696", pgs:"PGS000037", variants:"1,089,432", source:"Demenais 2018",
+            genes:[["IL13",2.51,"3.0e-09"],["IL4R",2.12,"1.8e-07"],["TSLP",1.83,"7.2e-06"],["ORMDL3",1.65,"4.0e-05"]],
+            axes:{cv:0.15, met:0.2, renal:0.1, neuro:0.05, onco:0.05, immune:0.95, psych:0.15, hepatic:0.1}},
+  copd:   { kr:"만성폐쇄성폐질환", en:"COPD", efo:"EFO_0000341", gse:"GSE76925", pgs:"PGS000099", variants:"875,012", source:"Sakornsakolpat 2019",
+            genes:[["SERPINA1",2.61,"2.4e-09"],["HHIP",2.04,"4.8e-07"],["FAM13A",1.74,"6.0e-06"]],
+            axes:{cv:0.5, met:0.3, renal:0.15, neuro:0.1, onco:0.4, immune:0.75, psych:0.15, hepatic:0.15}},
+  ra:     { kr:"류마티스 관절염", en:"Rheumatoid arthritis", efo:"EFO_0000685", gse:"GSE55235", pgs:"PGS000019", variants:"1,344,021", source:"Okada 2014",
+            genes:[["HLA-DRB1",3.41,"1.0e-13"],["PTPN22",2.51,"5.5e-09"],["STAT4",1.92,"6.0e-07"],["TNFAIP3",1.71,"2.4e-05"]],
+            axes:{cv:0.3, met:0.2, renal:0.2, neuro:0.05, onco:0.15, immune:0.97, psych:0.15, hepatic:0.1}},
+  afib:   { kr:"심방세동", en:"Atrial fibrillation", efo:"EFO_0000275", gse:"GSE41177", pgs:"PGS000016", variants:"1,201,883", source:"Roselli 2018",
+            genes:[["PITX2",2.81,"1.2e-10"],["KCNN3",2.04,"5.4e-07"],["ZFHX3",1.81,"4.0e-06"]],
+            axes:{cv:0.92, met:0.35, renal:0.3, neuro:0.2, onco:0.05, immune:0.3, psych:0.1, hepatic:0.1}},
+};
+
+// alias aliases for fuzzy matching
+const ALIAS = {
+  "type 2 diabetes":"t2d","당뇨":"t2d","t2dm":"t2d","diabetes":"t2d",
+  "당뇨발":"dfu","diabetic foot":"dfu","diabetic foot ulcer":"dfu",
+  "말초동맥":"pad","peripheral artery disease":"pad","peripheral arterial disease":"pad",
+  "만성콩팥병":"ckd","chronic kidney disease":"ckd","ckd":"ckd","ckd / eGFR":"ckd",
+  "관상동맥":"cad","coronary":"cad","coronary artery":"cad","cad":"cad","ihd":"cad",
+  "뇌졸중":"stroke","stroke":"stroke","ischemic stroke":"stroke",
+  "고혈압":"htn","hypertension":"htn","htn":"htn","high blood pressure":"htn",
+  "비만":"obesity","obesity":"obesity","bmi":"obesity",
+  "지방간":"nafld","nafld":"nafld","fatty liver":"nafld",
+  "알츠하이머":"ad","alzheimer":"ad","alzheimer's":"ad","ad":"ad",
+  "파킨슨":"pd","parkinson":"pd","parkinson's":"pd",
+  "우울":"mdd","우울증":"mdd","depression":"mdd","major depressive":"mdd","mdd":"mdd",
+  "조현병":"scz","schizophrenia":"scz","scz":"scz",
+  "유방암":"brca","breast cancer":"brca","brca":"brca",
+  "전립선암":"prca","prostate cancer":"prca",
+  "대장암":"crc","colorectal":"crc","crc":"crc","colon cancer":"crc",
+  "천식":"asthma","asthma":"asthma",
+  "copd":"copd","만성폐쇄성":"copd","폐쇄성폐질환":"copd",
+  "류마티스":"ra","rheumatoid":"ra","rheumatoid arthritis":"ra","ra":"ra",
+  "심방세동":"afib","atrial fibrillation":"afib","afib":"afib","af":"afib",
+};
+
+const PRESETS = {
+  metabolic: ["t2d","obesity","nafld","cad"],
+  onco:      ["brca","prca","crc","obesity"],
+  neuro:     ["ad","pd","mdd","scz"],
+  immune:    ["ra","asthma","copd","ad"],
+};
+
+// ===== STATE =====
+let selected = []; // disease keys
+const MAX = 5, MIN = 1;
+
+// ===== AUTOCOMPLETE =====
+const input = document.getElementById("diseaseInput");
+const suggest = document.getElementById("suggest");
+function renderSuggest(q) {
+  const ql = q.trim().toLowerCase();
+  let items = Object.entries(DB).filter(([k,v]) => !selected.includes(k));
+  if (ql) {
+    items = items.filter(([k,v]) =>
+      v.kr.toLowerCase().includes(ql) || v.en.toLowerCase().includes(ql) ||
+      k.includes(ql) || Object.keys(ALIAS).some(a => a.includes(ql) && ALIAS[a]===k)
+    );
+  }
+  // 전체 질환 목록을 모두 표시 (스크롤 가능). 검색어가 있으면 필터링만 적용.
+  if (!items.length) {
+    suggest.innerHTML = `<div class="px-3 py-3 text-sm text-slate-500">일치하는 질환이 없습니다.</div>`;
+    suggest.classList.remove("hidden");
+    return;
+  }
+  const header = `<div class="px-3 py-2 text-xs text-slate-500 bg-slate-50 border-b sticky top-0">전체 ${Object.keys(DB).length}개 질환 중 ${items.length}개 표시${ql ? ` · 검색: "${q}"` : ""}</div>`;
+  suggest.innerHTML = header + items.map(([k,v]) =>
+    `<button data-k="${k}"><span><span class="font-semibold">${v.kr}</span> <span class="text-slate-500 text-xs">${v.en}</span></span><span class="text-xs text-slate-400 font-mono">${v.efo}</span></button>`
+  ).join("");
+  suggest.classList.remove("hidden");
+}
+input.addEventListener("focus", () => renderSuggest(input.value));
+input.addEventListener("input", () => renderSuggest(input.value));
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const ql = input.value.trim().toLowerCase();
+    const direct = ALIAS[ql];
+    if (direct) { addDisease(direct); }
+    else {
+      // pick first suggestion
+      const first = suggest.querySelector("button[data-k]");
+      if (first) addDisease(first.dataset.k);
+    }
+  } else if (e.key === "Escape") suggest.classList.add("hidden");
+});
+suggest.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-k]");
+  if (btn) addDisease(btn.dataset.k);
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".relative")) suggest.classList.add("hidden");
+});
+
+// ===== CHIPS =====
+const chipsEl = document.getElementById("chips");
+function renderChips() {
+  chipsEl.innerHTML = selected.map(k =>
+    `<span class="chip">${DB[k].kr} <span class="text-amber-200/80 text-xs">${DB[k].en}</span> <button data-rm="${k}">×</button></span>`
+  ).join("");
+  document.getElementById("countBadge").textContent = `${selected.length} / ${MAX} 선택`;
+  document.getElementById("runBtn").disabled = selected.length < MIN;
+}
+chipsEl.addEventListener("click", (e) => {
+  const rm = e.target.closest("[data-rm]");
+  if (rm) { selected = selected.filter(x => x !== rm.dataset.rm); renderChips(); }
+});
+function addDisease(k) {
+  if (!DB[k] || selected.includes(k) || selected.length >= MAX) return;
+  selected.push(k);
+  input.value = "";
+  suggest.classList.add("hidden");
+  renderChips();
+}
+renderChips();
+
+// ===== PRESETS =====
+document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => {
+  selected = [...PRESETS[b.dataset.preset]].slice(0, MAX);
+  renderChips();
+}));
+document.getElementById("resetBtn").addEventListener("click", () => { selected=[]; renderChips(); });
+
+// ===== CORRELATION MODEL =====
+const AXES = ["cv","met","renal","neuro","onco","immune","psych","hepatic"];
+function cosine(a, b) {
+  let dot=0, na=0, nb=0;
+  for (const k of AXES) { const av=a[k]||0, bv=b[k]||0; dot+=av*bv; na+=av*av; nb+=bv*bv; }
+  return dot / (Math.sqrt(na)*Math.sqrt(nb) + 1e-9);
+}
+// deterministic hash for jitter
+function hash(s) { let h=2166136261; for (let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619);} return ((h>>>0)%10000)/10000; }
+function pairCorr(a, b) {
+  if (a === b) return 1;
+  const base = cosine(DB[a].axes, DB[b].axes); // 0..1 (axes nonneg)
+  const jitter = (hash(a+"|"+b)-0.5) * 0.06;
+  const r = Math.max(0.05, Math.min(0.85, base * 0.7 + 0.05 + jitter));
+  return +r.toFixed(2);
+}
+function approxP(r, n=2504) {
+  if (r >= 1) return 0;
+  const t = r * Math.sqrt((n-2)/(1-r*r));
+  // very rough p ≈ exp(-t^2/2) for large t
+  return Math.min(1, Math.exp(-t*t/2) * 2);
+}
+
+// ===== RUN PIPELINE =====
+const STEP_DEFS = (keys) => [
+  { id:"00", name:"GEO 유전자 탐색", detail:"GEOparse → DEG",
+    lines: () => {
+      const out = [{t:"info", m:"agents/00_geo_gene_discovery.py 시작"}];
+      for (const k of keys) {
+        const d = DB[k];
+        out.push({t:"", m:`GEO ${d.gse} 다운로드 (${d.en})... 샘플 자동 분류`});
+        out.push({t:"ok", m:`results/genes/${k}_genes.csv 저장 (DEG ${d.genes.length}개)`});
+      }
+      return out;
+    }},
+  { id:"01", name:"PGS Catalog 검색·다운로드", detail:"REST + Cowork",
+    lines: () => {
+      const out = [{t:"info", m:"agents/01_search_download.py 시작"}];
+      for (const k of keys) {
+        const d = DB[k];
+        out.push({t:"", m:`${d.efo} (${d.en}) → ${d.pgs}, GRCh38 harmonized 선택`});
+        out.push({t:"ok", m:`data/scores/${k}/${d.pgs}_hmPOS_GRCh38.txt.gz`});
+      }
+      return out;
+    }},
+  { id:"02", name:"PRS 계산", detail:"pgsc_calc / PLINK2",
+    lines: () => {
+      const out = [{t:"info", m:"agents/02_qc_prs.py 시작"},
+                   {t:"", m:"타깃: 1000 Genomes phase3 (N=2,504, GRCh38)"},
+                   {t:"", m:"QC: geno<0.05, maf>0.01, hwe>1e-6 → 변이 7.8M"}];
+      for (const k of keys) {
+        out.push({t:"", m:`PLINK2 --score ${k}... 매칭 변이 ${(70+Math.floor(hash(k)*20))}%`});
+        out.push({t:"ok", m:`results/prs/${k}_${DB[k].pgs}.sscore`});
+      }
+      return out;
+    }},
+  { id:"03", name:"조합 상관분석", detail:"pandas + scipy",
+    lines: () => [
+      {t:"info", m:"agents/03_correlate.py 시작"},
+      {t:"", m:"PRS 행렬 결합 → z-score 표준화"},
+      {t:"", m:`Pearson/Spearman 계산 (${keys.length*(keys.length-1)/2 + keys.length-1} 조합)`},
+      {t:"ok", m:"results/correlations/summary.csv"},
+      {t:"ok", m:"results/figures/heatmap.png"},
+    ]},
+  { id:"04", name:"LLM 리포트", detail:"Claude API",
+    lines: () => [
+      {t:"info", m:"agents/04_report.py 시작"},
+      {t:"", m:"summary.csv → Claude opus-4-7 프롬프트"},
+      {t:"", m:"해석·임상 함의·운영 제안 생성 중..."},
+      {t:"ok", m:"reports/report.md 저장"},
+      {t:"em", m:"전체 파이프라인 완료."},
+    ]},
+];
+
+let stepStates = [];
+function renderStepList(defs) {
+  const el = document.getElementById("stepList");
+  el.innerHTML = defs.map((s,i)=>{
+    const st = stepStates[i] || "idle";
+    const dot = st==="run" ? "run" : st==="done" ? "done" : "";
+    const c   = st==="run" ? "text-amber-700" : st==="done" ? "text-emerald-700" : "text-slate-700";
+    return `<li class="flex items-center gap-3"><span class="step-dot ${dot}"></span>
+      <span class="ui ${c}"><span class="font-semibold">${s.id}</span> · ${s.name}
+      <span class="text-slate-400 text-xs ml-1">${s.detail}</span></span></li>`;
+  }).join("");
+}
+const logEl = document.getElementById("log");
+function addLog(line) {
+  const cls = line.t ? `class="${line.t}"` : "";
+  logEl.insertAdjacentHTML("beforeend",
+    `<div><span class="text-slate-500">[${new Date().toLocaleTimeString()}]</span> <span ${cls}>${line.m}</span></div>`);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+let heatChart, scatterChart;
+
+async function run() {
+  if (selected.length < MIN) return;
+  document.getElementById("pipelineSec").classList.remove("hidden");
+  document.getElementById("results").classList.add("hidden");
+  document.getElementById("runBtn").disabled = true;
+  logEl.innerHTML = "";
+
+  const defs = STEP_DEFS(selected);
+  stepStates = defs.map(()=>"idle");
+  renderStepList(defs);
+
+  const t0 = performance.now();
+  for (let i=0;i<defs.length;i++) {
+    stepStates[i] = "run"; renderStepList(defs);
+    for (const line of defs[i].lines()) {
+      addLog(line);
+      await new Promise(r => setTimeout(r, 160 + Math.random()*140));
+    }
+    stepStates[i] = "done"; renderStepList(defs);
+  }
+  document.getElementById("elapsed").textContent = `${((performance.now()-t0)/1000).toFixed(1)}초 (브라우저 시연)`;
+
+  renderResults();
+  document.getElementById("results").classList.remove("hidden");
+  document.getElementById("runBtn").disabled = false;
+  document.getElementById("results").scrollIntoView({behavior:"smooth"});
+}
+document.getElementById("runBtn").addEventListener("click", run);
+
+// ===== RESULTS =====
+function strengthBadge(r) {
+  const a = Math.abs(r);
+  if (a < 0.2) return `<span class="pill pill-mute">약함</span>`;
+  if (a < 0.4) return `<span class="pill" style="background:#fde68a;color:#92400e">중간</span>`;
+  return `<span class="pill pill-gold">강함</span>`;
+}
+
+function renderResults() {
+  // 0. GENES
+  const gg = document.getElementById("geneGrid");
+  gg.innerHTML = selected.map(k => {
+    const d = DB[k];
+    return `<div class="card p-4">
+      <div class="ui flex items-center justify-between">
+        <span class="font-semibold">${d.kr}</span><span class="pill pill-mute">${d.gse}</span>
+      </div>
+      <table class="tight w-full mt-2 text-sm">
+        <thead><tr><th>Gene</th><th>log2FC</th><th>p</th></tr></thead>
+        <tbody>${d.genes.map(g => `<tr><td class="font-mono">${g[0]}</td><td>${g[1].toFixed(2)}</td><td class="text-slate-500">${g[2]}</td></tr>`).join("")}</tbody>
+      </table>
+    </div>`;
+  }).join("");
+
+  // 1. SCORES
+  document.getElementById("scoreRows").innerHTML = selected.map(k => {
+    const d = DB[k];
+    return `<tr><td class="font-semibold">${d.kr}</td><td class="font-mono">${d.pgs}</td><td>${d.en}</td><td>${d.variants}</td><td>GRCh38</td><td class="text-slate-500">${d.source}</td></tr>`;
+  }).join("");
+
+  // === 단일 질환 모드 분기 ===
+  const single = selected.length === 1;
+  document.getElementById("multiBlock").classList.toggle("hidden", single);
+  document.getElementById("scatterBlock").classList.toggle("hidden", single);
+  document.getElementById("singleBlock").classList.toggle("hidden", !single);
+  document.getElementById("analysisTitle").textContent = single
+    ? "5. 2–3단계 — PRS 계산 + 위험 분포"
+    : "5. 2–3단계 — PRS 계산 + 조합 상관분석";
+
+  if (single) {
+    renderSingleDisease(selected[0]);
+    renderReportSingle(selected[0]);
+    return;
+  }
+
+  // 2. HEATMAP DATA
+  const labels = selected.map(k => DB[k].kr);
+  const matrix = selected.map(a => selected.map(b => pairCorr(a,b)));
+  const heatData = [];
+  for (let y=0;y<selected.length;y++) for (let x=0;x<selected.length;x++)
+    heatData.push({x:labels[x], y:labels[y], v:matrix[y][x]});
+
+  if (heatChart) heatChart.destroy();
+  heatChart = new Chart(document.getElementById("heatmap").getContext("2d"), {
+    type:'matrix',
+    data:{ datasets:[{
+      label:'PRS r', data:heatData,
+      backgroundColor(ctx) {
+        const v = ctx.dataset.data[ctx.dataIndex].v;
+        const t = (v+1)/2;
+        const r=Math.round(11+(200-11)*t), g=Math.round(37+(169-37)*t), b=Math.round(69+(106-69)*t);
+        return `rgba(${r},${g},${b},${0.35+0.55*Math.abs(v)})`;
+      },
+      borderColor:'#fff', borderWidth:2,
+      width:({chart})=> (chart.chartArea||{}).width/selected.length - 4,
+      height:({chart})=> (chart.chartArea||{}).height/selected.length - 4,
+    }]},
+    options:{
+      plugins:{
+        legend:{display:false},
+        tooltip:{callbacks:{title:()=>'', label:(c)=>{const d=c.dataset.data[c.dataIndex]; return `${d.y} ~ ${d.x}: r=${d.v.toFixed(2)}`;}}}
+      },
+      scales:{
+        x:{ type:'category', labels, grid:{display:false}, ticks:{font:{weight:'600'}}},
+        y:{ type:'category', labels, offset:true, reverse:true, grid:{display:false}, ticks:{font:{weight:'600'}}}
+      }
+    },
+    plugins:[{
+      id:'cellText',
+      afterDatasetsDraw(chart) {
+        const {ctx} = chart;
+        chart.data.datasets[0].data.forEach((d,i)=>{
+          const meta = chart.getDatasetMeta(0).data[i];
+          if (!meta) return;
+          ctx.save();
+          ctx.fillStyle = Math.abs(d.v) > 0.5 ? '#fff' : '#1a1a1a';
+          ctx.font = '600 12px Calibri, sans-serif';
+          ctx.textAlign='center'; ctx.textBaseline='middle';
+          ctx.fillText(d.v.toFixed(2), meta.x, meta.y);
+          ctx.restore();
+        });
+      }
+    }]
+  });
+
+  // 3. COMBO TABLE — all pairs + composite axis
+  const pairs = [];
+  for (let i=0;i<selected.length;i++)
+    for (let j=i+1;j<selected.length;j++) {
+      const a=selected[i], b=selected[j], r = matrix[i][j];
+      pairs.push({combo:`${DB[a].kr} ~ ${DB[b].kr}`, r, rho: +(r*0.94).toFixed(2), p: approxP(r)});
+    }
+  // composite: 첫 질환 vs 나머지 평균
+  if (selected.length >= 3) {
+    const a = selected[0]; const rest = selected.slice(1);
+    const r = +(rest.map(b => pairCorr(a,b)).reduce((s,v)=>s+v,0)/rest.length).toFixed(2);
+    pairs.push({combo:`${DB[a].kr} ~ (${rest.map(k=>DB[k].kr).join("+")}) 합성`, r, rho:+(r*0.95).toFixed(2), p:approxP(r), composite:true});
+  }
+  document.getElementById("comboCountLabel").textContent = `(총 ${pairs.length}개)`;
+  document.getElementById("comboRows").innerHTML = pairs.map(c =>
+    `<tr${c.composite ? ' class="bg-amber-50"':''}>
+      <td class="${c.composite ? 'font-semibold' : ''}">${c.combo}</td>
+      <td>${c.r.toFixed(2)}</td>
+      <td>${c.rho.toFixed(2)}</td>
+      <td class="text-slate-500">${c.p < 1e-300 ? "<1e-300" : c.p.toExponential(1)}</td>
+      <td>${strengthBadge(c.r)}</td>
+    </tr>`).join("");
+
+  // 4. SCATTER controls
+  const xs = document.getElementById("xAxisSel");
+  const ys = document.getElementById("yAxisSel");
+  xs.innerHTML = selected.map(k => `<option value="${k}">${DB[k].kr}</option>`).join("");
+  ys.innerHTML = selected.map(k => `<option value="${k}">${DB[k].kr}</option>`).join("");
+  xs.value = selected[0]; ys.value = selected[1] || selected[0];
+  xs.onchange = ys.onchange = drawScatter;
+  drawScatter();
+
+  // 5. REPORT
+  renderReport(pairs, matrix);
+}
+
+function seeded(n, seed) { let s=seed; const out=[]; for (let i=0;i<n;i++){ s=(s*9301+49297)%233280; out.push(s/233280);} return out; }
+function boxMuller(a,b){ return Math.sqrt(-2*Math.log(a+1e-9))*Math.cos(2*Math.PI*b); }
+function drawScatter() {
+  const xKey = document.getElementById("xAxisSel").value;
+  const yKey = document.getElementById("yAxisSel").value;
+  const N = 500;
+  const seed = (hash(xKey)*9973 + hash(yKey)*131) % 9999 | 0;
+  const u1=seeded(N,seed+1), u2=seeded(N,seed+11), u3=seeded(N,seed+101), u4=seeded(N,seed+1001);
+  const latent = u1.map((v,i)=> boxMuller(v,u2[i]));
+  const noise  = u3.map((v,i)=> boxMuller(v,u4[i]));
+  const r = pairCorr(xKey, yKey);
+  const xs = latent;
+  const ys = latent.map((L,i)=> r*L + Math.sqrt(1-r*r)*noise[i]);
+  const points = xs.map((x,i)=>({x, y:ys[i]}));
+  const thr = [...ys].sort((a,b)=>b-a)[Math.floor(N*0.2)];
+  const high = points.filter(p => p.y >= thr);
+  const low  = points.filter(p => p.y <  thr);
+
+  document.getElementById("scatterLabel").textContent =
+    `— ${DB[xKey].kr} vs ${DB[yKey].kr} (r=${r.toFixed(2)})`;
+
+  if (scatterChart) scatterChart.destroy();
+  scatterChart = new Chart(document.getElementById("scatter").getContext("2d"), {
+    type:'scatter',
+    data:{ datasets:[
+      {label:'일반', data:low, backgroundColor:'rgba(11,37,69,0.45)', pointRadius:3},
+      {label:'고위험 (상위 20%)', data:high, backgroundColor:'rgba(200,169,106,0.95)', pointRadius:4},
+    ]},
+    options:{
+      scales:{
+        x:{title:{display:true, text:`${DB[xKey].kr} PRS (z)`}, grid:{color:'#eee'}},
+        y:{title:{display:true, text:`${DB[yKey].kr} PRS (z)`}, grid:{color:'#eee'}}
+      },
+      plugins:{ legend:{position:'bottom'} }
+    }
+  });
+}
+
+let histChart;
+function renderSingleDisease(key) {
+  const d = DB[key];
+  const N = 2504;
+  const seed = (hash(key)*12345) % 9999 | 0;
+  const u1 = seeded(N, seed+1), u2 = seeded(N, seed+11);
+  // z-score 분포 (표준정규)
+  const scores = u1.map((v,i)=> boxMuller(v, u2[i]));
+
+  // 히스토그램 빈 만들기
+  const bins = 30;
+  const min = -3.5, max = 3.5;
+  const counts = new Array(bins).fill(0);
+  scores.forEach(s => {
+    if (s < min || s > max) return;
+    const idx = Math.min(bins-1, Math.floor((s - min) / (max - min) * bins));
+    counts[idx]++;
+  });
+  const labels = Array.from({length:bins}, (_,i)=> (min + (i+0.5)*(max-min)/bins).toFixed(1));
+  // 상위 20% 임계 z-score
+  const sorted = [...scores].sort((a,b)=> b-a);
+  const thr = sorted[Math.floor(N*0.2)];
+  const colors = labels.map((_,i)=> {
+    const zCenter = min + (i+0.5)*(max-min)/bins;
+    return zCenter >= thr ? 'rgba(200,169,106,0.95)' : 'rgba(11,37,69,0.6)';
+  });
+
+  if (histChart) histChart.destroy();
+  histChart = new Chart(document.getElementById("histogram").getContext("2d"), {
+    type:'bar',
+    data:{ labels, datasets:[{ label:`${d.kr} PRS`, data:counts, backgroundColor:colors, borderWidth:0 }]},
+    options:{
+      plugins:{ legend:{display:false},
+                tooltip:{callbacks:{title:(items)=>`z ≈ ${items[0].label}`, label:(c)=>`${c.formattedValue}명`}}},
+      scales:{
+        x:{ title:{display:true, text:`PRS z-score (임계값 z=${thr.toFixed(2)})`}, grid:{display:false}, ticks:{maxTicksLimit:10}},
+        y:{ title:{display:true, text:'인원수'}, grid:{color:'#eee'}, beginAtZero:true}
+      }
+    }
+  });
+  document.getElementById("histLabel").textContent = `— ${d.kr}`;
+
+  // 위험 계층 표
+  const tiers = [
+    { label:"고위험 (상위 20%)",  zMin: thr,        zMax: Infinity, cls:"bg-amber-50 font-semibold" },
+    { label:"중위험 (상위 20–50%)", zMin: 0,          zMax: thr,      cls:"" },
+    { label:"평균 이하",          zMin: -1,         zMax: 0,        cls:"" },
+    { label:"저위험 (하위)",       zMin: -Infinity,  zMax: -1,       cls:"text-slate-500" },
+  ];
+  document.getElementById("riskRows").innerHTML = tiers.map(t => {
+    const n = scores.filter(s => s >= t.zMin && s < t.zMax).length;
+    const pct = (n/N*100).toFixed(1);
+    const range = `${t.zMin === -Infinity ? "-∞" : t.zMin.toFixed(2)} ~ ${t.zMax === Infinity ? "+∞" : t.zMax.toFixed(2)}`;
+    return `<tr class="${t.cls}"><td>${t.label}</td><td class="font-mono">${range}</td><td>${n}</td><td>${pct}%</td></tr>`;
+  }).join("");
+}
+
+function renderReportSingle(key) {
+  const d = DB[key];
+  const topGenes = d.genes.slice(0,3).map(g => g[0]).join(", ");
+  const lines = [
+    "### 요약",
+    `연구자가 선택한 단일 질환 **${d.kr}** (${d.en}, EFO ${d.efo})의 PRS를 1000 Genomes 코호트(N=2,504)에 적용해 개인별 위험 분포를 산출했다.`,
+    "### 유전적 배경",
+    `GEO ${d.gse}의 발현 데이터에서 추출한 주요 차등발현유전자(DEG)는 **${topGenes}** 등이며, 사용한 PGS는 ${d.pgs}(${d.source}, 변이 ${d.variants}개)이다.`,
+    "### 위험 계층",
+    "PRS z-score를 기준으로 코호트를 4구간으로 나누었다. 상위 20%(고위험군)는 평균보다 약 1 표준편차 이상 높은 유전적 위험을 가진 개인으로 정의되며, 이들에게 우선적 추적관찰이 권고된다.",
+    "### 임상적 함의",
+    `${d.kr}에 대한 단일 PRS는 가족력·생활습관 등 비유전적 요인과 결합될 때 가장 유용하다. 본 데모의 분포는 어떤 임상 워크플로에서 고위험군 컷오프를 설정할지 결정하는 시작점으로 활용할 수 있다.`,
+    "### 운영 제안",
+    `상위 20%에 해당하는 약 ${Math.round(2504*0.2)}명을 *고위험군*으로 분류해 정기 스크리닝 프로토콜을 적용하는 시범 운영을 권고한다. 향후 같은 코호트에 추가 질환을 도입하면 공유 위험축 분석으로 확장할 수 있다.`,
+  ];
+  document.getElementById("report").innerHTML = mdToHtml(lines.join("\n\n"));
+}
+
+function renderReport(pairs, matrix) {
+  const labels = selected.map(k => DB[k].kr);
+  const strongest = [...pairs].sort((a,b)=> b.r - a.r)[0];
+  const weakest   = [...pairs].sort((a,b)=> a.r - b.r)[0];
+
+  const lines = [];
+  lines.push(`### 요약`);
+  lines.push(`연구자가 선택한 ${selected.length}개 질환(**${labels.join(", ")}**)의 PRS를 1000 Genomes 코호트(N=2,504)에 적용해 상관축을 산출했다. 가장 강한 공유 위험축은 **${strongest.combo}** (r=${strongest.r.toFixed(2)}), 가장 약한 축은 **${weakest.combo}** (r=${weakest.r.toFixed(2)})로 나타났다.`);
+
+  lines.push(`### 조합별 해석`);
+  for (const p of pairs.filter(p => !p.composite)) {
+    const a = Math.abs(p.r);
+    const lvl = a<0.2 ? "약함" : a<0.4 ? "중간" : "강함";
+    lines.push(`- **${p.combo} (r=${p.r.toFixed(2)}, ${lvl})** — ${interpretPair(p)}`);
+  }
+
+  const composite = pairs.find(p => p.composite);
+  if (composite) {
+    lines.push(`### 합성 위험축`);
+    lines.push(`첫 질환을 나머지 질환의 합성 PRS와 비교했을 때 r=${composite.r.toFixed(2)}로, 단일 조합 평균보다 일관되게 ${composite.r > (pairs.filter(p=>!p.composite).reduce((s,p)=>s+p.r,0)/pairs.length) ? "높아" : "유사해"} 선택된 질환군이 공유하는 잠재 위험요인이 존재할 가능성을 시사한다.`);
+  }
+
+  lines.push(`### 임상적 함의`);
+  lines.push(`선택된 질환 간 유전적 위험이 공유된다는 점은, 단일 PRS 스코어가 아닌 다질환 통합 위험계층화의 가능성을 제시한다. 특히 ${strongest.combo} 축은 임상 워크플로 통합이 우선적으로 고려될 수 있다.`);
+
+  lines.push(`### 운영 제안`);
+  lines.push(`PRS 합성 위험축 상위 20%를 *고위험군*으로 정의할 경우 본 코호트 기준 약 500명이 해당한다. 이들에게 선택 질환 전체에 대한 통합 스크리닝 프로토콜(연 1회 정기 추적)을 적용하는 시범 운영을 권고한다.`);
+
+  document.getElementById("report").innerHTML = mdToHtml(lines.join("\n\n"));
+}
+
+function interpretPair(p) {
+  // pick deterministic narrative
+  const a = Math.abs(p.r);
+  const t = ["공통 병태생리에 부합", "공유 위험축의 유전적 근거", "병합 관리의 임상적 정당성", "단일 잠재요인 가설을 지지", "기존 역학 관찰과 일치"];
+  const idx = Math.floor(hash(p.combo)*t.length) % t.length;
+  if (a < 0.2) return "공유 위험은 제한적이나 통계적으로는 유의함.";
+  if (a < 0.4) return t[idx] + ". 중간 강도의 유전적 공유.";
+  return t[idx] + ". 강한 공유 위험축으로 통합 위험계층화에 활용 가능.";
+}
+
+function mdToHtml(md) {
+  return md
+    .replace(/^### (.*)$/gm, '<h3 class="font-semibold text-lg mt-4 mb-1 text-slate-900">$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/^- (.*)$/gm, '<li>$1</li>')
+    .replace(/(<li>(?:.|\n)*?<\/li>)/g, m => '<ul class="list-disc ml-6 space-y-1">' + m + '</ul>')
+    .replace(/\n\n/g, '<p class="mt-3"></p>');
+}
+
+// Optional: prefill with a sensible default
+[ "t2d","pad","ckd" ].forEach(addDisease);
+</script>
+</body>
+</html>
