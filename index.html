@@ -189,7 +189,7 @@
 
     <!-- STAGE 4 -->
     <section>
-      <h2 class="text-xl font-bold mb-3">6. 4단계 — LLM 자동 리포트</h2>
+      <h2 class="text-xl font-bold mb-3">6. 4단계 — AI 자동 리포트</h2>
       <div class="card p-5">
         <div id="report" class="prose max-w-none text-[15px] leading-relaxed text-slate-800"></div>
       </div>
@@ -425,7 +425,7 @@ const STEP_DEFS = (keys) => [
       }
       return out;
     }},
-  { id:"01", name:"PGS Catalog 검색·다운로드", detail:"REST + Cowork",
+  { id:"01", name:"PGS Catalog 검색·다운로드", detail:"REST + 크롤링",
     lines: () => {
       const out = [{t:"info", m:"agents/01_search_download.py 시작"}];
       for (const k of keys) {
@@ -454,7 +454,7 @@ const STEP_DEFS = (keys) => [
       {t:"ok", m:"results/correlations/summary.csv"},
       {t:"ok", m:"results/figures/heatmap.png"},
     ]},
-  { id:"04", name:"LLM 리포트", detail:"Claude API",
+  { id:"04", name:"AI 리포트", detail:"생성형 AI",
     lines: () => [
       {t:"info", m:"agents/04_report.py 시작"},
       {t:"", m:"summary.csv → Claude opus-4-7 프롬프트"},
